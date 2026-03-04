@@ -1015,7 +1015,7 @@
     if (
       dom.root &&
       dom.root.isConnected &&
-      placement.priority < state.mountPriority &&
+      placement.priority <= state.mountPriority &&
       dom.root.parentElement
     ) {
       return;
