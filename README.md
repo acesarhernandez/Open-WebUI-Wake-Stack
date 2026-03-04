@@ -1,12 +1,12 @@
 # Open WebUI Wake Stack
 
-This repository runs a server-hosted Open WebUI setup with a Wake-on-LAN control path for a separate Ollama machine.
+This repository runs a server-hosted Open WebUI setup with a server-side engine-control proxy for a separate Ollama machine.
 
 The intended layout is:
 
 - Open WebUI runs on an always-on server or homelab box
 - Ollama runs on the gaming PC with the GPU
-- a small wake service sends the magic packet and tracks engine state
+- a small wake service proxies wake requests to an external engine-control server and tracks engine state locally
 - `nginx` sits in front of Open WebUI and injects the header controls at runtime
 
 The goal is simple: keep the UI available all the time, let the gaming PC sleep, and wake it only when you actually want to use the local model.
@@ -22,7 +22,8 @@ Instead, it wraps the stock upstream Open WebUI Docker image and layers custom b
   - Talks to the remote Ollama host using `OLLAMA_BASE_URL`
 
 - `wake-service`
-  - FastAPI service that sends the WoL packet
+  - FastAPI service that keeps the existing `/api/wake-engine` route for the UI
+  - Proxies wake requests to an external engine-control server
   - Tracks wake state
   - Exposes status and health endpoints
   - Keeps structured logs for troubleshooting
@@ -115,12 +116,22 @@ The most important settings are:
   - the gaming PC's Ollama endpoint
   - example: `http://192.168.86.248:11434`
 
+- `ENGINE_CONTROL_URL`
+  - base URL for the external engine-control server
+  - example: `http://192.168.86.10:8000`
+
+- `ENGINE_CONTROL_API_KEY`
+  - bearer token used by this backend when it calls the engine-control server
+  - keep this in `.env` only
+  - do not expose this to the browser
+
 - `ENGINE_MAC`
-  - the physical wired Ethernet MAC address of the gaming PC
+  - deprecated for the wake button path
+  - no longer required when using `ENGINE_CONTROL_URL`
 
 - `ENGINE_BROADCAST_IP`
-  - the broadcast address for your LAN
-  - example: `192.168.86.255`
+  - deprecated for the wake button path
+  - no longer required when using `ENGINE_CONTROL_URL`
 
 - `ENGINE_HOST`
   - the gaming PC's actual LAN IP
@@ -176,7 +187,7 @@ Do not use `localhost` from another device. `localhost` only points back to the 
 The custom backend exposes these endpoints:
 
 - `POST /api/wake-engine`
-  - sends the WoL packet and begins the wake flow
+  - proxies the wake request to the external engine-control server and begins the wake flow
 
 - `GET /api/engine-status`
   - returns the cached state used by the UI
@@ -198,14 +209,15 @@ The custom backend exposes these endpoints:
 
 Check these in order:
 
-- the MAC address is the wired Ethernet adapter, not Wi-Fi
-- the broadcast IP matches your real subnet
+- `ENGINE_CONTROL_URL` points to the correct engine-control server
+- `ENGINE_CONTROL_API_KEY` matches the key expected by that server
+- the external engine-control server is healthy and reachable from this stack
 - the gaming PC is on Ethernet
 - Wake-on-LAN is enabled in BIOS / UEFI
 - the NIC is allowed to wake the machine
 - the NIC is set to wake on magic packet
 
-If WoL works from the host machine but not from Docker on Linux, the container network may be interfering with broadcast traffic. In that case, move `wake-service` to host networking.
+This repo no longer sends the WoL packet directly when the wake button is pressed. If wake fails, the first place to inspect is the external engine-control service.
 
 ### If the UI says `Offline` after a refresh
 

@@ -1,9 +1,26 @@
 import os
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from wake_service.config import WakeConfig, parse_bool
-from wake_service.service import build_magic_packet, generate_request_id
+from wake_service.service import (
+    EngineControlConfigError,
+    WakeService,
+    build_magic_packet,
+    generate_request_id,
+)
+
+
+class _FakeResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return b'{"ok":true}'
 
 
 class WakeServiceHelpersTest(unittest.TestCase):
@@ -28,10 +45,15 @@ class WakeServiceHelpersTest(unittest.TestCase):
         try:
             os.environ["ENABLE_WAKE_HEADER"] = "false"
             os.environ["ENGINE_NAME"] = "custom-box"
+            os.environ["ENGINE_CONTROL_URL"] = "http://engine.local/"
+            os.environ["ENGINE_CONTROL_API_KEY"] = "secret"
             os.environ["WAKE_API_ALLOWED_ORIGINS"] = "http://localhost:3000,http://localhost:8080"
             config = WakeConfig.from_env()
             self.assertFalse(config.enable_wake_header)
             self.assertEqual(config.engine_name, "custom-box")
+            self.assertEqual(config.engine_control_url, "http://engine.local")
+            self.assertEqual(config.engine_control_api_key, "secret")
+            self.assertTrue(config.engine_control_is_configured)
             self.assertEqual(
                 config.allowed_origins,
                 ["http://localhost:3000", "http://localhost:8080"],
@@ -39,6 +61,36 @@ class WakeServiceHelpersTest(unittest.TestCase):
         finally:
             os.environ.clear()
             os.environ.update(previous)
+
+    def test_trigger_wake_requires_engine_control_config(self) -> None:
+        service = WakeService(WakeConfig(engine_name="gaming-pc"))
+
+        with self.assertRaises(EngineControlConfigError):
+            service.trigger_wake("gaming-pc")
+
+    def test_trigger_wake_calls_engine_control_server(self) -> None:
+        service = WakeService(
+            WakeConfig(
+                engine_name="gaming-pc",
+                engine_control_url="http://engine.local/",
+                engine_control_api_key="secret",
+            )
+        )
+
+        with patch("wake_service.service.urlopen", return_value=_FakeResponse()) as mock_urlopen:
+            with patch.object(service, "_start_poll_thread") as mock_poll_thread:
+                response = service.trigger_wake("gaming-pc")
+
+        request = mock_urlopen.call_args.args[0]
+        headers = dict(request.header_items())
+
+        self.assertEqual(request.full_url, "http://engine.local/v1/engine/wake")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(headers["Authorization"], "Bearer secret")
+        self.assertEqual(headers["Accept"], "application/json")
+        self.assertTrue(response["accepted"])
+        self.assertEqual(response["state"], "waking")
+        mock_poll_thread.assert_called_once_with(response["request_id"])
 
 
 if __name__ == "__main__":

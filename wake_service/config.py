@@ -30,6 +30,8 @@ class WakeConfig:
     bind_host: str = "0.0.0.0"
     bind_port: int = 8787
     engine_name: str = "gaming-pc"
+    engine_control_url: str = ""
+    engine_control_api_key: str = ""
     engine_mac: str = "00:00:00:00:00:00"
     engine_broadcast_ip: str = "255.255.255.255"
     engine_host: str = "127.0.0.1"
@@ -52,6 +54,8 @@ class WakeConfig:
             bind_host=os.getenv("WAKE_BIND_HOST", "0.0.0.0"),
             bind_port=int(os.getenv("WAKE_BIND_PORT", "8787")),
             engine_name=os.getenv("ENGINE_NAME", "gaming-pc"),
+            engine_control_url=os.getenv("ENGINE_CONTROL_URL", "").rstrip("/"),
+            engine_control_api_key=os.getenv("ENGINE_CONTROL_API_KEY", ""),
             engine_mac=os.getenv("ENGINE_MAC", "00:00:00:00:00:00"),
             engine_broadcast_ip=os.getenv("ENGINE_BROADCAST_IP", "255.255.255.255"),
             engine_host=os.getenv("ENGINE_HOST", "127.0.0.1"),
@@ -95,3 +99,7 @@ class WakeConfig:
 
     def feature_flags_payload(self) -> Dict[str, bool]:
         return {"enable_wake_header": self.enable_wake_header}
+
+    @property
+    def engine_control_is_configured(self) -> bool:
+        return bool(self.engine_control_url and self.engine_control_api_key)

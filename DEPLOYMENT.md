@@ -30,7 +30,7 @@ Make sure the homelab machine has:
 - Docker installed
 - Docker Compose available
 - network access to the gaming PC on your LAN
-- permission to send Wake-on-LAN broadcasts on that network
+- network access to the external engine-control server
 
 Make sure the gaming PC has:
 
@@ -94,12 +94,21 @@ Set these values carefully:
   - the gaming PC's Ollama address
   - example: `http://192.168.86.248:11434`
 
+- `ENGINE_CONTROL_URL`
+  - the base URL for the external engine-control server
+  - example: `http://192.168.86.10:8000`
+
+- `ENGINE_CONTROL_API_KEY`
+  - the bearer token this backend uses when it calls the engine-control server
+  - keep this in `.env` only
+
 - `ENGINE_MAC`
-  - the gaming PC's wired Ethernet MAC
+  - deprecated for the wake button path
+  - no longer required when using `ENGINE_CONTROL_URL`
 
 - `ENGINE_BROADCAST_IP`
-  - the LAN broadcast address
-  - example: `192.168.86.255`
+  - deprecated for the wake button path
+  - no longer required when using `ENGINE_CONTROL_URL`
 
 - `ENGINE_HOST`
   - the gaming PC's LAN IP
@@ -198,7 +207,7 @@ That confirms the full path:
 - browser
 - nginx
 - wake service
-- WoL packet
+- engine-control server
 - gaming PC wake
 - Ollama ready
 - Open WebUI chat

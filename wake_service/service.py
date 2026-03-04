@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import threading
@@ -8,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from .config import WakeConfig
@@ -76,6 +79,14 @@ def build_magic_packet(mac_address: str) -> bytes:
     return (b"\xff" * 6) + (mac_bytes * 16)
 
 
+class EngineControlConfigError(RuntimeError):
+    pass
+
+
+class EngineControlRequestError(RuntimeError):
+    pass
+
+
 class WakeService:
     def __init__(self, config: WakeConfig) -> None:
         self.config = config
@@ -100,6 +111,8 @@ class WakeService:
                 ),
                 "wake_timeout_seconds": self.config.engine_wake_timeout_seconds,
                 "poll_interval_seconds": self.config.engine_status_poll_interval_seconds,
+                "engine_control_url": self.config.engine_control_url or None,
+                "engine_control_proxy_configured": self.config.engine_control_is_configured,
                 "feature_flags": self.config.feature_flags_payload(),
                 "versions": self.config.version_payload(),
             },
@@ -168,11 +181,67 @@ class WakeService:
                 details=details,
             )
 
-    def _send_magic_packet(self) -> None:
-        packet = build_magic_packet(self.config.engine_mac)
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
-            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            udp_socket.sendto(packet, (self.config.engine_broadcast_ip, 9))
+    @staticmethod
+    def _extract_engine_control_error(raw_body: bytes) -> str:
+        text = raw_body.decode("utf-8", "replace").strip()
+        if not text:
+            return ""
+
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            return text
+
+        for key in ("detail", "message", "error"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        return text
+
+    def _engine_control_wake_endpoint(self) -> str:
+        if not self.config.engine_control_is_configured:
+            raise EngineControlConfigError(
+                "Engine control proxy is not configured. "
+                "Set ENGINE_CONTROL_URL and ENGINE_CONTROL_API_KEY."
+            )
+
+        return self.config.engine_control_url.rstrip("/") + "/v1/engine/wake"
+
+    def _send_engine_control_wake(self) -> str:
+        endpoint = self._engine_control_wake_endpoint()
+        request = Request(endpoint, method="POST")
+        request.add_header(
+            "Authorization",
+            "Bearer {token}".format(token=self.config.engine_control_api_key),
+        )
+        request.add_header("Accept", "application/json")
+
+        try:
+            with urlopen(
+                request,
+                timeout=self.config.engine_connect_timeout_seconds,
+            ) as response:
+                response.read()
+        except HTTPError as exc:
+            detail = self._extract_engine_control_error(exc.read())
+            if detail:
+                raise EngineControlRequestError(
+                    "Engine control server returned HTTP {code}: {detail}".format(
+                        code=exc.code,
+                        detail=detail,
+                    )
+                ) from exc
+            raise EngineControlRequestError(
+                "Engine control server returned HTTP {code}".format(code=exc.code)
+            ) from exc
+        except (URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise EngineControlRequestError(
+                "Engine control server request failed: {error}".format(error=reason)
+            ) from exc
+
+        return endpoint
 
     def _probe_engine(self) -> Tuple[bool, bool, Optional[float], Optional[str]]:
         start = time.perf_counter()
@@ -329,6 +398,8 @@ class WakeService:
                 )
             )
 
+        self._engine_control_wake_endpoint()
+
         with self._lock:
             if self._snapshot.ui_state in {
                 UiState.WAKING.value,
@@ -364,16 +435,16 @@ class WakeService:
         )
 
         try:
-            self._send_magic_packet()
+            endpoint = self._send_engine_control_wake()
             self._log(
                 logging.INFO,
                 "wake_request_sent",
                 request_id=request_id,
                 state=UiState.WAKING.value,
-                details={"broadcast_ip": self.config.engine_broadcast_ip},
+                details={"engine_control_url": endpoint},
             )
-        except OSError as exc:
-            reason = "Failed to send Wake-on-LAN packet: {error}".format(error=exc)
+        except EngineControlRequestError as exc:
+            reason = str(exc)
             with self._lock:
                 self._snapshot.last_failed_wake_at = utc_now()
                 self._snapshot.last_failure_reason = reason
@@ -389,19 +460,14 @@ class WakeService:
                 state=UiState.ERROR.value,
                 error=reason,
             )
-            return {
-                "accepted": False,
-                "request_id": request_id,
-                "state": UiState.ERROR.value,
-                "message": reason,
-            }
+            raise
 
         self._start_poll_thread(request_id)
         return {
             "accepted": True,
             "request_id": request_id,
             "state": UiState.WAKING.value,
-            "message": "Wake packet sent",
+            "message": "Wake request sent to engine control server",
         }
 
     def get_status(self) -> Dict[str, Any]:
@@ -450,6 +516,8 @@ class WakeService:
                 "host": self.config.engine_host,
                 "port": self.config.engine_ollama_port,
                 "broadcast_ip": self.config.engine_broadcast_ip,
+                "control_url": self.config.engine_control_url or None,
+                "control_proxy_configured": self.config.engine_control_is_configured,
             },
             "feature_flags": self.config.feature_flags_payload(),
             "versions": self.config.version_payload(),

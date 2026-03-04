@@ -14,7 +14,11 @@ from .models import (
     WakeRequest,
     WakeResponse,
 )
-from .service import WakeService
+from .service import (
+    EngineControlConfigError,
+    EngineControlRequestError,
+    WakeService,
+)
 
 configure_logging()
 CONFIG = WakeConfig.from_env()
@@ -68,6 +72,16 @@ def wake_engine(
         response = SERVICE.trigger_wake(payload.target or CONFIG.engine_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EngineControlConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except EngineControlRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
 
     return WakeResponse(**response)
 
