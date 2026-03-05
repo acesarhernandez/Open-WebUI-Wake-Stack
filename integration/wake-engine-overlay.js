@@ -19,6 +19,7 @@
     featureEnabled: true,
     targetName: "gaming-pc",
     mountPriority: 0,
+    statusPollFailureCount: 0,
   };
 
   const dom = {
@@ -187,6 +188,7 @@
   async function refreshStatus() {
     try {
       const payload = await fetchJson(API.status);
+      state.statusPollFailureCount = 0;
       setState({
         uiState: payload.ui_state || "idle",
         engineState: payload.state || "offline",
@@ -199,7 +201,22 @@
         stopPolling();
       }
     } catch (error) {
-      setState({ uiState: "error" });
+      state.statusPollFailureCount += 1;
+      const wakeFlowActive = isWakeInProgress(state.uiState);
+      log("status_poll_failed", {
+        error: String(error),
+        wake_flow_active: wakeFlowActive,
+        consecutive_failures: state.statusPollFailureCount,
+      });
+
+      if (wakeFlowActive) {
+        ensurePolling();
+        return;
+      }
+
+      if (state.statusPollFailureCount >= 2) {
+        setState({ uiState: "error" });
+      }
       stopPolling();
     }
   }
@@ -1007,6 +1024,91 @@
     return score;
   }
 
+  function allInteractiveDescendants(node) {
+    if (!node) {
+      return [];
+    }
+
+    return Array.from(
+      node.querySelectorAll("button, a, [role='button'], [role='link'], [role='combobox']")
+    ).filter(function (element) {
+      return isVisible(element);
+    });
+  }
+
+  function maxInteractiveRightEdge(node) {
+    const interactive = allInteractiveDescendants(node);
+    if (!interactive.length) {
+      return 0;
+    }
+
+    return interactive.reduce(function (maxRight, element) {
+      return Math.max(maxRight, rightEdge(element));
+    }, 0);
+  }
+
+  function minInteractiveTop(node) {
+    const interactive = allInteractiveDescendants(node);
+    if (!interactive.length) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    return interactive.reduce(function (minTop, element) {
+      return Math.min(minTop, element.getBoundingClientRect().top);
+    }, Number.POSITIVE_INFINITY);
+  }
+
+  function firstDirectInteractiveInRightSide(container, sideStartX) {
+    if (!container) {
+      return null;
+    }
+
+    const directChildren = visibleNonOverlayChildren(container);
+    const candidates = [];
+
+    directChildren.forEach(function (child) {
+      if (!isVisible(child)) {
+        return;
+      }
+
+      const childRect = child.getBoundingClientRect();
+      if (childRect.right < sideStartX) {
+        return;
+      }
+
+      if (
+        isDirectInteractiveElement(child) ||
+        child.querySelector("button, a, [role='button'], [role='link'], [role='combobox']")
+      ) {
+        candidates.push(child);
+      }
+    });
+
+    candidates.sort(function (left, right) {
+      const leftDiff = leftEdge(left) - leftEdge(right);
+      if (leftDiff !== 0) {
+        return leftDiff;
+      }
+      return rightEdge(right) - rightEdge(left);
+    });
+
+    return candidates[0] || null;
+  }
+
+  function beforeNodeForContainer(container, header) {
+    const headerRect = header ? header.getBoundingClientRect() : null;
+    const sideStartX = headerRect
+      ? headerRect.left + headerRect.width * 0.55
+      : window.innerWidth * 0.55;
+
+    return (
+      firstDirectInteractiveInRightSide(container, sideStartX) ||
+      findLeftmostInteractiveChild(container) ||
+      findRightmostInteractiveChild(container) ||
+      null
+    );
+  }
+
   function findPrimaryHeader() {
     const viewportWidth =
       window.innerWidth || document.documentElement.clientWidth || 1280;
@@ -1020,11 +1122,50 @@
       return null;
     }
 
-    candidates.sort(function (left, right) {
-      return scoreHeaderCandidate(right, viewportWidth) - scoreHeaderCandidate(left, viewportWidth);
+    const scored = candidates
+      .map(function (candidate) {
+        return {
+          node: candidate,
+          score: scoreHeaderCandidate(candidate, viewportWidth),
+          maxInteractiveRight: maxInteractiveRightEdge(candidate),
+          minInteractiveTop: minInteractiveTop(candidate),
+          width: candidate.getBoundingClientRect().width,
+        };
+      })
+      .filter(function (entry) {
+        return entry.score !== -Infinity;
+      });
+
+    if (!scored.length) {
+      return null;
+    }
+
+    const rightThreshold = viewportWidth * 0.8;
+    const rightAnchored = scored.filter(function (entry) {
+      return entry.maxInteractiveRight >= rightThreshold;
+    });
+    const pool = rightAnchored.length ? rightAnchored : scored;
+
+    pool.sort(function (left, right) {
+      const rightEdgeDiff = right.maxInteractiveRight - left.maxInteractiveRight;
+      if (rightEdgeDiff !== 0) {
+        return rightEdgeDiff;
+      }
+
+      const topDiff = left.minInteractiveTop - right.minInteractiveTop;
+      if (topDiff !== 0) {
+        return topDiff;
+      }
+
+      const widthDiff = right.width - left.width;
+      if (widthDiff !== 0) {
+        return widthDiff;
+      }
+
+      return right.score - left.score;
     });
 
-    return candidates[0] || null;
+    return pool[0].node || null;
   }
 
   function findRightmostHeaderChild(header) {
@@ -1135,7 +1276,7 @@
         container: actionCluster,
         beforeNode:
           findDirectChildForNode(actionCluster, temporaryChatAnchor) ||
-          findLeftmostInteractiveChild(actionCluster) ||
+          beforeNodeForContainer(actionCluster, header) ||
           temporaryChatAnchor,
         priority: 3,
       };
@@ -1148,7 +1289,7 @@
         container: actionCluster,
         beforeNode:
           findDirectChildForNode(actionCluster, settingsAnchor) ||
-          findLeftmostInteractiveChild(actionCluster) ||
+          beforeNodeForContainer(actionCluster, header) ||
           settingsAnchor,
         priority: 2.5,
       };
@@ -1158,7 +1299,7 @@
     if (rightActionCluster) {
       return {
         container: rightActionCluster,
-        beforeNode: findLeftmostInteractiveChild(rightActionCluster) || null,
+        beforeNode: beforeNodeForContainer(rightActionCluster, header),
         priority: 2.2,
       };
     }
@@ -1167,7 +1308,7 @@
     if (rightmostHeaderChild && interactiveChildCount(rightmostHeaderChild) >= 1) {
       return {
         container: rightmostHeaderChild,
-        beforeNode: findLeftmostInteractiveChild(rightmostHeaderChild) || null,
+        beforeNode: beforeNodeForContainer(rightmostHeaderChild, header),
         priority: 2.1,
       };
     }
@@ -1179,7 +1320,7 @@
 
     return {
       container: target,
-      beforeNode: findLeftmostInteractiveChild(target) || findRightmostInteractiveChild(target),
+      beforeNode: beforeNodeForContainer(target, header),
       priority: target === header ? 1 : 2,
     };
   }
