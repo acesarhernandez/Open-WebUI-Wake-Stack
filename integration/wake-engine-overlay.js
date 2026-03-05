@@ -754,6 +754,14 @@
     return node.getBoundingClientRect().right;
   }
 
+  function leftEdge(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") {
+      return 0;
+    }
+
+    return node.getBoundingClientRect().left;
+  }
+
   function centerX(node) {
     if (!node || typeof node.getBoundingClientRect !== "function") {
       return 0;
@@ -960,6 +968,87 @@
     return candidates[0] || header;
   }
 
+  function isLikelySidebarHeader(node, rect, viewportWidth) {
+    const nearLeft = rect.left <= 24;
+    const narrow = rect.width <= Math.max(360, viewportWidth * 0.45);
+    const notNearRight = rect.right < viewportWidth * 0.82;
+    const insideAside = !!node.closest("aside");
+    return (nearLeft && narrow && notNearRight) || insideAside;
+  }
+
+  function scoreHeaderCandidate(node, viewportWidth) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0) {
+      return -Infinity;
+    }
+
+    let score = 0;
+    if (rect.top <= 120) {
+      score += 20;
+    }
+    if (rect.right >= viewportWidth * 0.92) {
+      score += 30;
+    }
+    if (rect.width >= viewportWidth * 0.5) {
+      score += 25;
+    }
+    if (rect.width >= viewportWidth * 0.7) {
+      score += 20;
+    }
+    if (interactiveChildCount(node) >= 2) {
+      score += 10;
+    }
+    if (isLikelySidebarHeader(node, rect, viewportWidth)) {
+      score -= 80;
+    }
+
+    score += rect.width / 50;
+    score -= Math.max(0, rect.top) / 10;
+    return score;
+  }
+
+  function findPrimaryHeader() {
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth || 1280;
+    const candidates = Array.from(
+      document.querySelectorAll("header, nav, [role='banner']")
+    ).filter(function (node) {
+      return isVisible(node);
+    });
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort(function (left, right) {
+      return scoreHeaderCandidate(right, viewportWidth) - scoreHeaderCandidate(left, viewportWidth);
+    });
+
+    return candidates[0] || null;
+  }
+
+  function findRightmostHeaderChild(header) {
+    const children = visibleNonOverlayChildren(header).filter(function (child) {
+      return isVisible(child);
+    });
+
+    children.sort(function (left, right) {
+      const edgeDiff = rightEdge(right) - rightEdge(left);
+      if (edgeDiff !== 0) {
+        return edgeDiff;
+      }
+
+      const leftDiff = leftEdge(left) - leftEdge(right);
+      if (leftDiff !== 0) {
+        return leftDiff;
+      }
+
+      return interactiveChildCount(right) - interactiveChildCount(left);
+    });
+
+    return children[0] || null;
+  }
+
   function findRightActionCluster(header) {
     if (!header || !isVisible(header)) {
       return null;
@@ -1033,10 +1122,7 @@
   }
 
   function findMountPlacement() {
-    const header =
-      document.querySelector("header") ||
-      document.querySelector("nav") ||
-      document.querySelector('[role="banner"]');
+    const header = findPrimaryHeader();
 
     if (!header) {
       return null;
@@ -1074,6 +1160,15 @@
         container: rightActionCluster,
         beforeNode: findLeftmostInteractiveChild(rightActionCluster) || null,
         priority: 2.2,
+      };
+    }
+
+    const rightmostHeaderChild = findRightmostHeaderChild(header);
+    if (rightmostHeaderChild && interactiveChildCount(rightmostHeaderChild) >= 1) {
+      return {
+        container: rightmostHeaderChild,
+        beforeNode: findLeftmostInteractiveChild(rightmostHeaderChild) || null,
+        priority: 2.1,
       };
     }
 
@@ -1136,7 +1231,7 @@
       dom.root &&
       dom.root.isConnected &&
       placement.priority <= state.mountPriority &&
-      dom.root.parentElement
+      dom.root.parentElement === placement.container
     ) {
       return;
     }
