@@ -249,6 +249,80 @@ Check these after every update:
 4. `Wake Engine` still works
 5. A real chat works once the engine is ready
 
+## Post-Update Verification (Recommended Every Deploy)
+
+Use this checklist after any pull/restart, especially if header controls move or flicker.
+
+### 1. Pull latest code
+
+```bash
+git pull
+```
+
+### 2. Recreate the web proxy container
+
+```bash
+docker compose up -d --force-recreate web
+```
+
+Why this matters:
+
+- the overlay script is injected by `nginx` in the `web` container
+- recreating `web` ensures your latest `integration/nginx-openwebui.conf` is active
+
+### 3. Confirm all services are healthy
+
+```bash
+docker compose ps
+```
+
+You want:
+
+- `open-webui` healthy
+- `wake-service` running
+- `web` running
+
+### 4. Confirm the injected overlay version
+
+```bash
+curl -s http://localhost:3000 | grep -o 'wake-engine-overlay.js?v=[^"]*'
+```
+
+Expected result:
+
+- it returns the current version key (example: `wake-engine-overlay.js?v=wake16`)
+
+If this does not match the version in `integration/nginx-openwebui.conf`, the old container or cache is still in play.
+
+### 5. Hard-refresh browser cache
+
+Desktop:
+
+- macOS Safari/Chrome: hard reload, or open a private/incognito window once
+
+Mobile:
+
+- close and reopen the tab
+- if needed, use private browsing once to avoid stale cached JS
+
+### 6. Functional UI check
+
+Verify in order:
+
+1. Header controls render in the expected position
+2. No left-right flicker when sidebar opens/closes
+3. Status pill opens diagnostics
+4. `Wake Engine` triggers a wake request
+5. Status moves to `Ready` when Ollama is actually reachable
+
+### 7. If issues persist, recreate both custom layers
+
+```bash
+docker compose up -d --force-recreate web wake-service
+```
+
+Then repeat steps 3 through 6.
+
 ## Updating Open WebUI Itself
 
 This is different from updating your own code.

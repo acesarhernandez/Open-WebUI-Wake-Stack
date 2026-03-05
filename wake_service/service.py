@@ -471,6 +471,7 @@ class WakeService:
         }
 
     def get_status(self) -> Dict[str, Any]:
+        self._refresh_state()
         with self._lock:
             return {
                 "state": self._snapshot.engine_state,

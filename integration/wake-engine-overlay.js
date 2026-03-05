@@ -907,8 +907,8 @@
         isVisible(candidate) &&
         candidate.id !== "wake-engine-controls" &&
         visibleNonOverlayChildren(candidate).length > 0 &&
-        visibleNonOverlayChildren(candidate).length <= 12 &&
-        interactiveChildCount(candidate) >= 2
+        visibleNonOverlayChildren(candidate).length <= 16 &&
+        interactiveChildCount(candidate) >= 1
       );
     });
 
@@ -954,6 +954,19 @@
           findLeftmostInteractiveChild(actionCluster) ||
           temporaryChatAnchor,
         priority: 3,
+      };
+    }
+
+    const settingsAnchor = findSettingsAnchor(header);
+    if (settingsAnchor && settingsAnchor.parentElement) {
+      const actionCluster = findActionCluster(settingsAnchor, header) || settingsAnchor.parentElement;
+      return {
+        container: actionCluster,
+        beforeNode:
+          findDirectChildForNode(actionCluster, settingsAnchor) ||
+          findLeftmostInteractiveChild(actionCluster) ||
+          settingsAnchor,
+        priority: 2.5,
       };
     }
 

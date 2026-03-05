@@ -92,6 +92,19 @@ class WakeServiceHelpersTest(unittest.TestCase):
         self.assertEqual(response["state"], "waking")
         mock_poll_thread.assert_called_once_with(response["request_id"])
 
+    def test_get_status_refreshes_cached_online_state(self) -> None:
+        service = WakeService(WakeConfig(engine_name="gaming-pc"))
+
+        with service._lock:
+            service._snapshot.ui_state = "online"
+            service._snapshot.engine_state = "online"
+
+        with patch.object(service, "_probe_engine", return_value=(False, False, None, "offline")):
+            status = service.get_status()
+
+        self.assertEqual(status["ui_state"], "idle")
+        self.assertEqual(status["state"], "offline")
+
 
 if __name__ == "__main__":
     unittest.main()
