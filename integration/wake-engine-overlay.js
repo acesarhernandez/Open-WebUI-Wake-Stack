@@ -754,6 +754,32 @@
     return node.getBoundingClientRect().right;
   }
 
+  function centerX(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") {
+      return 0;
+    }
+
+    const rect = node.getBoundingClientRect();
+    return rect.left + rect.width / 2;
+  }
+
+  function looksLikeModelSelectorCluster(node) {
+    if (!node || !isVisible(node)) {
+      return false;
+    }
+
+    if (node.querySelector("select, [role='combobox']")) {
+      return true;
+    }
+
+    const text = (node.textContent || "").trim().toLowerCase();
+    return (
+      text.indexOf("select a model") !== -1 ||
+      text.indexOf("set as default") !== -1 ||
+      text.indexOf("model") !== -1
+    );
+  }
+
   function isSettingsNode(node) {
     if (!node || !isVisible(node) || !isDirectInteractiveElement(node)) {
       return false;
@@ -934,6 +960,78 @@
     return candidates[0] || header;
   }
 
+  function findRightActionCluster(header) {
+    if (!header || !isVisible(header)) {
+      return null;
+    }
+
+    const headerRect = header.getBoundingClientRect();
+    const rightHalfStart = headerRect.left + headerRect.width * 0.55;
+
+    const candidates = Array.from(header.querySelectorAll("div, nav, section")).filter(function (
+      candidate
+    ) {
+      if (!isVisible(candidate) || candidate.id === "wake-engine-controls") {
+        return false;
+      }
+
+      const children = visibleNonOverlayChildren(candidate);
+      if (children.length === 0 || children.length > 16) {
+        return false;
+      }
+
+      if (interactiveChildCount(candidate) < 1) {
+        return false;
+      }
+
+      if (centerX(candidate) < rightHalfStart) {
+        return false;
+      }
+
+      if (looksLikeModelSelectorCluster(candidate)) {
+        return false;
+      }
+
+      return true;
+    });
+
+    candidates.sort(function (left, right) {
+      const leftInteractions = interactiveChildCount(left);
+      const rightInteractions = interactiveChildCount(right);
+
+      const leftInRange = leftInteractions >= 2 && leftInteractions <= 8 ? 1 : 0;
+      const rightInRange = rightInteractions >= 2 && rightInteractions <= 8 ? 1 : 0;
+      const rangeDiff = rightInRange - leftInRange;
+      if (rangeDiff !== 0) {
+        return rangeDiff;
+      }
+
+      const interactionDiff = rightInteractions - leftInteractions;
+      if (interactionDiff !== 0) {
+        return interactionDiff;
+      }
+
+      const edgeDiff = rightEdge(right) - rightEdge(left);
+      if (edgeDiff !== 0) {
+        return edgeDiff;
+      }
+
+      const widthDiff = left.getBoundingClientRect().width - right.getBoundingClientRect().width;
+      if (widthDiff !== 0) {
+        return widthDiff;
+      }
+
+      const depthDiff = depthFrom(right, header) - depthFrom(left, header);
+      if (depthDiff !== 0) {
+        return depthDiff;
+      }
+
+      return left.children.length - right.children.length;
+    });
+
+    return candidates[0] || null;
+  }
+
   function findMountPlacement() {
     const header =
       document.querySelector("header") ||
@@ -967,6 +1065,15 @@
           findLeftmostInteractiveChild(actionCluster) ||
           settingsAnchor,
         priority: 2.5,
+      };
+    }
+
+    const rightActionCluster = findRightActionCluster(header);
+    if (rightActionCluster) {
+      return {
+        container: rightActionCluster,
+        beforeNode: findLeftmostInteractiveChild(rightActionCluster) || null,
+        priority: 2.2,
       };
     }
 
