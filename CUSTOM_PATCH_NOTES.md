@@ -2,6 +2,14 @@
 
 This workspace started without a local Open WebUI git checkout, and outbound `git clone` was blocked by the environment. Because of that, the "header button" customization is implemented here as a runtime overlay (`integration/wake-engine-overlay.js`) instead of a direct edit to an Open WebUI source file.
 
+## Next Release Notes (Draft)
+
+- Improved mobile wake reliability:
+  - if the wake request succeeds but early status polls fail transiently, the UI now stays in wake recovery mode and continues polling instead of sticking on `Error`
+  - this removes the case where mobile required a full app/browser restart to recover status
+- Added diagnostics version chip:
+  - the Engine Diagnostics modal now shows `Open WebUI + custom patch` version in the header (right side of the title)
+
 ## Files added in this implementation
 
 - `wake_service/config.py`: environment parsing and feature flags

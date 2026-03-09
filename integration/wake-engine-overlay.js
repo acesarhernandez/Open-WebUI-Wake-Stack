@@ -22,6 +22,7 @@
     mountPriority: 0,
     statusPollFailureCount: 0,
     lastWakeAttemptAtMs: null,
+    diagVersions: null,
   };
 
   const dom = {
@@ -32,6 +33,7 @@
     diagnosticsNote: null,
     diagnosticsRows: {},
     diagnosticsRefreshButton: null,
+    diagnosticsVersionChip: null,
   };
   let mountScheduled = false;
 
@@ -278,6 +280,26 @@
     }
   }
 
+  function formatDiagnosticsVersion(versions) {
+    if (!versions) {
+      return "Version unknown";
+    }
+
+    const upstream = versions.openwebui_upstream || "unknown";
+    const patch = versions.custom_patch || "custom";
+    return "v" + upstream + "-" + patch;
+  }
+
+  function updateDiagnosticsVersionChip(versions) {
+    if (!dom.diagnosticsVersionChip) {
+      return;
+    }
+
+    const label = formatDiagnosticsVersion(versions || state.diagVersions);
+    dom.diagnosticsVersionChip.textContent = label;
+    dom.diagnosticsVersionChip.title = "Open WebUI + custom patch version";
+  }
+
   function buildCachedDiagnosticsSnapshot() {
     const snapshot = state.lastHealth ? Object.assign({}, state.lastHealth) : {};
     const uiState = state.uiState || snapshot.ui_state || "idle";
@@ -323,9 +345,18 @@
     dialog.setAttribute("aria-modal", "true");
     dialog.setAttribute("aria-labelledby", "wake-engine-diagnostics-title");
 
+    const titleBar = document.createElement("div");
+    titleBar.className = "wake-engine-diagnostics-titlebar";
+
     const title = document.createElement("h3");
     title.id = "wake-engine-diagnostics-title";
     title.textContent = "Engine Diagnostics";
+
+    const versionChip = document.createElement("span");
+    versionChip.className = "wake-engine-diagnostics-version";
+
+    titleBar.appendChild(title);
+    titleBar.appendChild(versionChip);
 
     const note = document.createElement("p");
     note.className = "wake-engine-diagnostics-note";
@@ -372,7 +403,7 @@
     footer.appendChild(refreshButton);
     footer.appendChild(closeButton);
 
-    dialog.appendChild(title);
+    dialog.appendChild(titleBar);
     dialog.appendChild(note);
     dialog.appendChild(rows);
     dialog.appendChild(footer);
@@ -394,11 +425,17 @@
     dom.diagnosticsBackdrop = backdrop;
     dom.diagnosticsNote = note;
     dom.diagnosticsRefreshButton = refreshButton;
+    dom.diagnosticsVersionChip = versionChip;
+    updateDiagnosticsVersionChip();
   }
 
   function renderDiagnosticsModal(payload) {
     const snapshot = payload || buildCachedDiagnosticsSnapshot();
     const usingLiveData = !!payload;
+    if (snapshot.versions) {
+      state.diagVersions = snapshot.versions;
+    }
+    updateDiagnosticsVersionChip();
 
     setDiagnosticsRow("status", fullLabelForState(snapshot.ui_state || state.uiState || "idle"));
     setDiagnosticsRow("host", formatFlag(snapshot.host_reachable));
@@ -595,6 +632,30 @@
       "  font-size: 1rem;",
       "  font-weight: 700;",
       "}",
+      "#wake-engine-diagnostics .wake-engine-diagnostics-titlebar {",
+      "  margin: 0 0 8px;",
+      "  display: flex;",
+      "  align-items: center;",
+      "  justify-content: space-between;",
+      "  gap: 10px;",
+      "}",
+      "#wake-engine-diagnostics .wake-engine-diagnostics-titlebar h3 {",
+      "  margin: 0;",
+      "}",
+      "#wake-engine-diagnostics .wake-engine-diagnostics-version {",
+      "  display: inline-flex;",
+      "  align-items: center;",
+      "  min-height: 24px;",
+      "  padding: 0 10px;",
+      "  border-radius: 999px;",
+      "  border: 1px solid rgba(100, 116, 139, 0.2);",
+      "  background: rgba(15, 23, 42, 0.05);",
+      "  color: #334155;",
+      "  font-size: 0.72rem;",
+      "  font-weight: 600;",
+      "  letter-spacing: 0.01em;",
+      "  white-space: nowrap;",
+      "}",
       "#wake-engine-diagnostics .wake-engine-diagnostics-note {",
       "  margin: 0 0 14px;",
       "  font-size: 0.82rem;",
@@ -679,6 +740,12 @@
       "html.dark #wake-engine-diagnostics .wake-engine-diagnostics-value,",
       "html.her #wake-engine-diagnostics .wake-engine-diagnostics-value {",
       "  color: #f8fafc;",
+      "}",
+      "html.dark #wake-engine-diagnostics .wake-engine-diagnostics-version,",
+      "html.her #wake-engine-diagnostics .wake-engine-diagnostics-version {",
+      "  color: #cbd5e1;",
+      "  border-color: rgba(148, 163, 184, 0.24);",
+      "  background: rgba(255, 255, 255, 0.06);",
       "}",
       "html.dark #wake-engine-diagnostics .wake-engine-modal-button,",
       "html.her #wake-engine-diagnostics .wake-engine-modal-button {",
@@ -1418,6 +1485,9 @@
       const diag = await fetchJson(API.diag);
       if (diag.engine && diag.engine.name) {
         state.targetName = diag.engine.name;
+      }
+      if (diag.versions) {
+        state.diagVersions = diag.versions;
       }
       if (diag.feature_flags && diag.feature_flags.enable_wake_header === false) {
         state.featureEnabled = false;
