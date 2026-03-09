@@ -1,5 +1,6 @@
 (function () {
   const POLL_INTERVAL_MS = 5000;
+  const WAKE_RECOVERY_WINDOW_MS = 120000;
   const COMPACT_LAYOUT_QUERY = "(max-width: 720px)";
   const STYLE_ID = "wake-engine-overlay-style";
   const API = {
@@ -20,6 +21,7 @@
     targetName: "gaming-pc",
     mountPriority: 0,
     statusPollFailureCount: 0,
+    lastWakeAttemptAtMs: null,
   };
 
   const dom = {
@@ -165,7 +167,20 @@
     if (Object.prototype.hasOwnProperty.call(next, "requestId")) {
       state.requestId = next.requestId;
     }
+
+    if (state.uiState === "online") {
+      state.lastWakeAttemptAtMs = null;
+    }
+
     syncDom();
+  }
+
+  function hasRecentWakeAttempt() {
+    if (!state.lastWakeAttemptAtMs) {
+      return false;
+    }
+
+    return Date.now() - state.lastWakeAttemptAtMs < WAKE_RECOVERY_WINDOW_MS;
   }
 
   function ensurePolling() {
@@ -203,13 +218,18 @@
     } catch (error) {
       state.statusPollFailureCount += 1;
       const wakeFlowActive = isWakeInProgress(state.uiState);
+      const wakeRecoveryActive = wakeFlowActive || hasRecentWakeAttempt();
       log("status_poll_failed", {
         error: String(error),
         wake_flow_active: wakeFlowActive,
+        wake_recovery_active: wakeRecoveryActive,
         consecutive_failures: state.statusPollFailureCount,
       });
 
-      if (wakeFlowActive) {
+      if (wakeRecoveryActive) {
+        if (!wakeFlowActive) {
+          setState({ uiState: "waking" });
+        }
         ensurePolling();
         return;
       }
@@ -439,6 +459,7 @@
       return;
     }
 
+    state.lastWakeAttemptAtMs = Date.now();
     log("header_button_clicked");
     setState({ uiState: "waking" });
 
@@ -457,6 +478,18 @@
       ensurePolling();
       await refreshStatus();
     } catch (error) {
+      log("wake_request_failed", { error: String(error) });
+      ensurePolling();
+      await refreshStatus();
+
+      if (isWakeInProgress(state.uiState) || state.uiState === "online" || hasRecentWakeAttempt()) {
+        if (!isWakeInProgress(state.uiState) && state.uiState !== "online") {
+          setState({ uiState: "waking" });
+        }
+        ensurePolling();
+        return;
+      }
+
       setState({ uiState: "error" });
     }
   }
